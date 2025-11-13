@@ -1,6 +1,6 @@
 import React from "react";
 import type { ModalProps } from "@mantine/core";
-import { Modal, Stack, Text, ScrollArea, Flex, CloseButton, Button, Group, Textarea } from "@mantine/core";
+import { Modal, Stack, Text, ScrollArea, Flex, CloseButton, Button, Group, Textarea, TextInput } from "@mantine/core";
 import { CodeHighlight } from "@mantine/code-highlight";
 import type { NodeData } from "../../../types/graph";
 import useGraph from "../../editor/views/GraphView/stores/useGraph";
@@ -37,11 +37,15 @@ export const NodeModal = ({ opened, onClose }: ModalProps) => {
 
   const [editing, setEditing] = React.useState(false);
   const [editedText, setEditedText] = React.useState("");
+  const [editedFields, setEditedFields] = React.useState<Record<string, string>>({});
+  const [editedSingleValue, setEditedSingleValue] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     // reset editing state when modal opens/closes or node changes
     setEditing(false);
     setEditedText("");
+    setEditedFields({});
+    setEditedSingleValue(null);
   }, [opened, nodeData]);
 
   const setAtPath = (obj: any, path: NodeData["path"] | undefined, value: any) => {
@@ -75,25 +79,51 @@ export const NodeModal = ({ opened, onClose }: ModalProps) => {
   };
 
   const handleEdit = () => {
-    setEditedText(normalizeNodeData(nodeData?.text ?? []));
+    // Populate inputs per-field when entering edit mode
+    const rows = nodeData?.text ?? [];
+    if (rows.length === 1 && !rows[0].key) {
+      setEditedSingleValue(String(rows[0].value ?? ""));
+    } else {
+      const fields: Record<string, string> = {};
+      rows.forEach(r => {
+        if (r.type !== "array" && r.type !== "object" && r.key) {
+          fields[r.key] = String(r.value ?? "");
+        }
+      });
+      setEditedFields(fields);
+    }
     setEditing(true);
   };
 
   const handleCancel = () => {
     setEditing(false);
     setEditedText("");
+    setEditedFields({});
+    setEditedSingleValue(null);
   };
 
   const handleSave = async () => {
     if (!nodeData) return;
 
-    // Determine new value from edited text. Try JSON.parse, fall back to raw string
+    // Determine new value from edited inputs
     let newValue: any;
-    try {
-      newValue = JSON.parse(editedText);
-    } catch (e) {
-      // not valid JSON — treat as string
-      newValue = editedText;
+    if (editedSingleValue !== null) {
+      try {
+        newValue = JSON.parse(editedSingleValue);
+      } catch (e) {
+        newValue = editedSingleValue;
+      }
+    } else {
+      // build object from editedFields
+      const obj: Record<string, any> = {};
+      Object.entries(editedFields).forEach(([k, v]) => {
+        try {
+          obj[k] = JSON.parse(v);
+        } catch (e) {
+          obj[k] = v;
+        }
+      });
+      newValue = obj;
     }
 
     try {
@@ -124,6 +154,8 @@ export const NodeModal = ({ opened, onClose }: ModalProps) => {
       // close edit mode
       setEditing(false);
       setEditedText("");
+      setEditedFields({});
+      setEditedSingleValue(null);
     } catch (error) {
       // if anything fails, just exit edit mode and keep original
       console.error("Failed to save node edit", error);
@@ -166,13 +198,32 @@ export const NodeModal = ({ opened, onClose }: ModalProps) => {
                 language="json"
                 withCopyButton
               />
-            ) : (
-              <Textarea
-                minRows={6}
-                value={editedText}
-                onChange={e => setEditedText(e.currentTarget.value)}
+            ) : editedSingleValue !== null ? (
+              <TextInput
+                value={editedSingleValue}
+                onChange={e => setEditedSingleValue(e.currentTarget.value)}
+                autosize={true as any}
+                minRows={3}
                 styles={{ input: { fontFamily: "monospace", fontSize: 13 } }}
               />
+            ) : (
+              <Stack spacing="xs">
+                {Object.keys(editedFields).length === 0 ? (
+                  <Text fz="xs" color="dimmed">
+                    No editable fields available
+                  </Text>
+                ) : (
+                  Object.entries(editedFields).map(([k, v]) => (
+                    <TextInput
+                      key={k}
+                      label={k}
+                      value={v}
+                      onChange={e => setEditedFields(prev => ({ ...prev, [k]: e.currentTarget.value }))}
+                      styles={{ input: { fontFamily: "monospace", fontSize: 13 } }}
+                    />
+                  ))
+                )}
+              </Stack>
             )}
           </ScrollArea.Autosize>
         </Stack>
